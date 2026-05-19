@@ -3,6 +3,7 @@ package tgclient
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -195,12 +196,19 @@ func (s *DBSessionStorage) LoadSession(ctx context.Context) ([]byte, error) {
 	if err != nil || len(data) == 0 {
 		return nil, session.ErrNotFound
 	}
-	// Decrypt blobs that were stored with EncryptAEAD. Legacy plaintext blobs
-	// (pre-encryption migration) are returned as-is so the gotd session loader
-	// can read them — the auto-migration will re-encrypt them on next store.
+	// Decrypt blobs that were stored with EncryptAEAD.
 	plain, err := utils.DecryptAEAD(data)
 	if err != nil {
-		return data, nil
+		// If decryption fails, the data could be a legacy plaintext JSON session
+		// from pre-encryption. We verify if it is valid JSON.
+		// If it's NOT valid JSON, it's either corrupted or encrypted with a different key,
+		// so we must treat it as not found so gotd can cleanly recreate the session.
+		if json.Valid(data) {
+			log.Printf("[Session] Loaded legacy plaintext session for %s", s.SessionID)
+			return data, nil
+		}
+		log.Printf("[Session] Decryption failed and data is not valid JSON for %s. Treating as ErrNotFound.", s.SessionID)
+		return nil, session.ErrNotFound
 	}
 	return plain, nil
 }

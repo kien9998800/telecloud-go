@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"telecloud/database"
 	"time"
 
@@ -125,9 +126,9 @@ func (h *Handler) handleLogout(c *gin.Context) {
 }
 
 func (h *Handler) handleGetResetAdmin(c *gin.Context) {
-	token := c.Query("token")
-	dbToken := database.GetSetting("admin_reset_token")
-	expiryStr := database.GetSetting("admin_reset_expiry")
+	token := strings.TrimSpace(c.Query("token"))
+	dbToken := strings.TrimSpace(database.GetSetting("admin_reset_token"))
+	expiryStr := strings.TrimSpace(database.GetSetting("admin_reset_expiry"))
 
 	if token == "" || token != dbToken {
 		c.String(http.StatusForbidden, "Invalid token")
@@ -147,11 +148,14 @@ func (h *Handler) handleGetResetAdmin(c *gin.Context) {
 }
 
 func (h *Handler) handlePostResetAdmin(c *gin.Context) {
-	token := c.PostForm("token")
+	token := strings.TrimSpace(c.PostForm("token"))
+	if token == "" {
+		token = strings.TrimSpace(c.Query("token"))
+	}
 	password := c.PostForm("password")
 
-	dbToken := database.GetSetting("admin_reset_token")
-	expiryStr := database.GetSetting("admin_reset_expiry")
+	dbToken := strings.TrimSpace(database.GetSetting("admin_reset_token"))
+	expiryStr := strings.TrimSpace(database.GetSetting("admin_reset_expiry"))
 
 	if token == "" || token != dbToken {
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid_token"})
