@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"path"
 	"path/filepath"
@@ -272,11 +273,23 @@ func (b *TelecloudBackend) DeleteObject(bucketName, objectName string) (gofakes3
 
 	err := database.RODB.Get(&file, query, args...)
 	if err != nil {
-		return gofakes3.ObjectDeleteResult{}, nil
+		// S3 spec: DeleteObject is idempotent — return success even if not found.
+		return gofakes3.ObjectDeleteResult{IsDeleteMarker: false}, nil
 	}
 
-	now := time.Now()
-	database.DB.Exec("UPDATE files SET deleted_at = ? WHERE id = ?", now, file.ID)
+	// S3 semantics require permanent deletion — soft-delete would cause stale
+	// ListBucket results and leak Telegram messages for up to 30 days.
+	// Collect orphaned Telegram message IDs BEFORE removing DB rows.
+	msgIDsToDelete, _ := database.GetOrphanedMessages([]int{file.ID})
+
+	// Hard-delete from database.
+	database.DB.Exec("DELETE FROM files WHERE id = ?", file.ID)
+
+	// Clean up Telegram messages in background (non-blocking).
+	if len(msgIDsToDelete) > 0 {
+		go tgclient.DeleteMessages(context.Background(), b.cfg, msgIDsToDelete)
+	}
+
 	return gofakes3.ObjectDeleteResult{IsDeleteMarker: false}, nil
 }
 
@@ -326,7 +339,6 @@ func (b *TelecloudBackend) PutObject(bucketName, key string, meta map[string]str
 		return gofakes3.PutObjectResult{}, err
 	}
 	_, err = io.Copy(out, input)
-	out.Sync()
 	out.Close()
 	defer os.Remove(tempFilePath)
 
@@ -335,6 +347,14 @@ func (b *TelecloudBackend) PutObject(bucketName, key string, meta map[string]str
 	}
 
 	mimeType := meta["Content-Type"]
+	// Fallback to extension-based detection when S3 client omits Content-Type.
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		if ext := filepath.Ext(filename); ext != "" {
+			if detected := mime.TypeByExtension(ext); detected != "" {
+				mimeType = detected
+			}
+		}
+	}
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}

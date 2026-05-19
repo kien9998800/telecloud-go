@@ -73,9 +73,10 @@ func GetAuthStatus(ctx context.Context) (*auth.Status, error) {
 }
 
 type BotInstance struct {
-	Client  *telegram.Client
-	Token   string
-	Deleted bool // Mark as deleted if initialization fails
+	Client        *telegram.Client
+	Token         string
+	Deleted       bool // Mark as deleted if initialization fails
+	CooldownUntil time.Time
 }
 
 func GetAPI() *tg.Client {
@@ -83,8 +84,9 @@ func GetAPI() *tg.Client {
 	defer botPoolMu.RUnlock()
 
 	var activeIndices []int
+	now := time.Now()
 	for i := range BotPool {
-		if !BotPool[i].Deleted {
+		if !BotPool[i].Deleted && now.After(BotPool[i].CooldownUntil) {
 			activeIndices = append(activeIndices, i)
 		}
 	}
@@ -95,6 +97,49 @@ func GetAPI() *tg.Client {
 		return Client.API()
 	}
 	return BotPool[activeIndices[idx-1]].Client.API()
+}
+
+func MarkBotCooldown(api *tg.Client, seconds int) {
+	botPoolMu.Lock()
+	defer botPoolMu.Unlock()
+
+	now := time.Now()
+	cooldownTime := now.Add(time.Duration(seconds) * time.Second)
+
+	for i := range BotPool {
+		if BotPool[i].Client.API() == api {
+			if BotPool[i].CooldownUntil.Before(cooldownTime) {
+				BotPool[i].CooldownUntil = cooldownTime
+				log.Printf("[BotPool] Bot #%d (%s) is rate-limited. Cooling down for %d seconds...", i+1, BotPool[i].Token[:8]+"...", seconds)
+			}
+			break
+		}
+	}
+}
+
+func ParseFloodWait(err error) (int, bool) {
+	if err == nil {
+		return 0, false
+	}
+	errStr := err.Error()
+	if idx := strings.Index(errStr, "FLOOD_WAIT_"); idx != -1 {
+		sub := errStr[idx+len("FLOOD_WAIT_"):]
+		var digits []rune
+		for _, r := range sub {
+			if r >= '0' && r <= '9' {
+				digits = append(digits, r)
+			} else {
+				break
+			}
+		}
+		if len(digits) > 0 {
+			if secs, err := strconv.Atoi(string(digits)); err == nil {
+				return secs, true
+			}
+		}
+		return 10, true
+	}
+	return 0, false
 }
 
 func GetBotCount() int {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -893,6 +894,29 @@ func InsertAndGetID(db DBExecer, query string, args ...interface{}) (int64, erro
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// fileInsertShards provides per-(owner,path) serialization for the
+// GetUniqueFilename → InsertAndGetID sequence.
+// Using 64 shards reduces contention while keeping memory usage constant.
+const fileInsertShards = 64
+
+var fileInsertMu [fileInsertShards]sync.Mutex
+
+// AcquireFileInsertLock returns an unlock function that must be deferred.
+// Call it before GetUniqueFilename and release after InsertAndGetID to
+// prevent TOCTOU duplicate-filename races, especially on MySQL which
+// lacks the partial unique index (WHERE deleted_at IS NULL).
+func AcquireFileInsertLock(owner, dirPath string) func() {
+	// FNV-1a hash of owner+path, folded into shard index.
+	h := uint32(2166136261)
+	for _, c := range owner + "|" + dirPath {
+		h ^= uint32(c)
+		h *= 16777619
+	}
+	mu := &fileInsertMu[h%fileInsertShards]
+	mu.Lock()
+	return mu.Unlock
 }
 
 type FilePart struct {
