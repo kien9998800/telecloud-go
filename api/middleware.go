@@ -163,7 +163,7 @@ func setupCheckMiddleware() gin.HandlerFunc {
 		// If admin exists but Telegram system is not ready, handle accordingly
 		if !tgclient.IsSystemReady() {
 			// If the system is currently initializing, show a loading message instead of redirecting to setup
-			if tgclient.IsRunning() {
+			if tgclient.IsRunning() && !tgclient.IsInitializationDone() {
 				fmt.Println("[TeleCloud] Telegram client is initializing. Serving 'TeleCloud is starting up' page to:", c.Request.URL.Path)
 				c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`
 						<!DOCTYPE html><html><head><meta http-equiv="refresh" content="3"><title>Starting up...</title>

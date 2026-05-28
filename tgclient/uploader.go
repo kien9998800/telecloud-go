@@ -142,9 +142,9 @@ func getRemoteHTTPClient() *http.Client {
 }
 
 func InitUploader(cfg *config.Config) {
-	uploadCount := 4
+	uploadCount := 1
 	if botCount := GetBotCount(); botCount > 0 {
-		uploadCount = 4 * (botCount + 1)
+		uploadCount = botCount + 1
 	}
 	uploadSemaphore = make(chan struct{}, uploadCount)
 
